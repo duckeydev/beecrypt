@@ -1,128 +1,200 @@
 import { Beecrypt } from "./src/index.ts";
+import { detectPbkdf2Backend, fallbackPbkdf2, nativePbkdf2 } from "./src/pbkdf2.ts";
+import type { Digest } from "./src/types.ts";
 
 const password = "benchmark-password-123!@#$";
-const warmupRuns = 1;
-const benchRuns = 3;
+const salt = new Uint8Array(32);
+for (let i = 0; i < salt.length; i++) salt[i] = i + 1;
 
-function fmt(n: number): string {
+const warmupRuns = 1;
+const hashRuns = 3;
+const deriveRuns = 5;
+
+interface BunPassword {
+  hash(password: string): Promise<string>;
+  verify(password: string, encoded: string): Promise<boolean>;
+}
+
+interface RuntimeGlobals {
+  Bun?: {
+    version?: string;
+    password?: BunPassword;
+  };
+  Deno?: {
+    version?: string | { deno?: string };
+  };
+  Ant?: {
+    version?: string;
+  };
+  process?: {
+    versions?: { node?: string; };
+  };
+}
+
+const runtimeGlobals = globalThis as unknown as RuntimeGlobals;
+
+interface Config {
+  label: string;
+  iterations: number;
+  digest: Digest;
+  keyBytes: number;
+  saltBytes: number;
+}
+
+const publicConfigs: Config[] = [
+  { label: "SHA-512  64B key", iterations: 210_000, digest: "SHA-512", keyBytes: 64, saltBytes: 32 },
+  { label: "SHA-512  64B key", iterations: 100_000, digest: "SHA-512", keyBytes: 64, saltBytes: 32 },
+  { label: "SHA-512  64B key", iterations:  10_000, digest: "SHA-512", keyBytes: 64, saltBytes: 32 },
+  { label: "SHA-256  32B key", iterations: 210_000, digest: "SHA-256", keyBytes: 32, saltBytes: 32 },
+  { label: "SHA-256  32B key", iterations: 100_000, digest: "SHA-256", keyBytes: 32, saltBytes: 32 },
+  { label: "SHA-256  32B key", iterations:  10_000, digest: "SHA-256", keyBytes: 32, saltBytes: 32 },
+  { label: "SHA-512  16B key", iterations: 210_000, digest: "SHA-512", keyBytes: 16, saltBytes: 16 },
+  { label: "SHA-512  16B key", iterations: 100_000, digest: "SHA-512", keyBytes: 16, saltBytes: 16 },
+  { label: "SHA-512  16B key", iterations:  10_000, digest: "SHA-512", keyBytes: 16, saltBytes: 16 },
+];
+
+const deriveConfigs: Config[] = [
+  { label: "SHA-512  64B key", iterations: 10_000, digest: "SHA-512", keyBytes: 64, saltBytes: 32 },
+  { label: "SHA-256  32B key", iterations: 10_000, digest: "SHA-256", keyBytes: 32, saltBytes: 32 },
+];
+
+const pureConfigs: Config[] = [
+  { label: "SHA-512  64B key", iterations: 250, digest: "SHA-512", keyBytes: 64, saltBytes: 32 },
+  { label: "SHA-256  32B key", iterations: 250, digest: "SHA-256", keyBytes: 32, saltBytes: 32 },
+];
+
+function fmtMs(n: number): string {
+  return n.toFixed(1).padStart(7);
+}
+
+function fmtUs(n: number): string {
   return n.toFixed(1).padStart(7);
 }
 
 function fmtNum(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-  if (n >= 1_000) return (n / 1_000).toFixed(0) + "k";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
   return String(n);
 }
 
-const runtime = (() => {
-  // @ts-ignore
-  if (typeof Bun !== "undefined") return `Bun ${Bun.version}`;
-  // @ts-ignore
-  if (typeof Deno !== "undefined") return `Deno ${Deno.version}`;
-  // @ts-ignore
-  if (typeof process !== "undefined" && process.versions?.node && !process.versions?.ant) return `Node ${process.versions.node}`;
-  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
-  if (ua.includes("Ant")) return ua.includes("/") ? `Ant ${ua.split("/")[1]}` : "Ant";
-  // @ts-ignore
-  if (typeof process !== "undefined" && process.versions?.node) return `Node ${process.versions.node}`;
+function runtimeName(): string {
+  const bun = runtimeGlobals.Bun;
+  if (bun) return `Bun ${bun.version ?? ""}`.trim();
+
+  const deno = runtimeGlobals.Deno;
+  if (deno) {
+    const version = typeof deno.version === "string" ? deno.version : deno.version?.deno;
+    return `Deno ${version ?? ""}`.trim();
+  }
+
+  const ant = runtimeGlobals.Ant;
+  if (ant) return `Ant ${ant.version ?? ""}`.trim();
+
+  const nodeVersion = runtimeGlobals.process?.versions?.node;
+  if (nodeVersion) return `Node ${nodeVersion}`;
+
   return "unknown";
-})();
-
-// Probe: how fast is 100 iterations?
-const probe = new Beecrypt({ iterations: 100, digest: "SHA-256", keyBytes: 32 });
-const t0 = performance.now();
-await probe.hash(password);
-const probeMs = performance.now() - t0;
-const native = probeMs < 20; // native PBKDF2 does 100 iters in <1ms; pure-JS takes much longer
-const speed = probeMs / 100; // ms per iteration
-
-if (!native) {
-  console.log(`\n  ⚠  Using pure-JS PBKDF2 fallback (~${(speed * 1000).toFixed(0)} µs/iter)`);
-  console.log(`     Reducing iteration counts to avoid long waits.`);
 }
 
-const scaleFactor = native ? 1 : Math.min(1, 800 / speed / 210_000);
-
-function scale(n: number): number {
-  return Math.max(10, Math.round(n * scaleFactor));
+async function meanAsync(runs: number, fn: () => Promise<void>): Promise<number> {
+  const start = performance.now();
+  for (let i = 0; i < runs; i++) await fn();
+  return (performance.now() - start) / runs;
 }
 
-function label(prefix: string, iterations: number): string {
-  const scaled = scale(iterations);
-  const itStr = fmtNum(scaled);
-  return scaled === iterations ? `${prefix}  k=${itStr}` : `${prefix}  k=${itStr} (scaled)`;
+function meanSync(runs: number, fn: () => void): number {
+  const start = performance.now();
+  for (let i = 0; i < runs; i++) fn();
+  return (performance.now() - start) / runs;
 }
 
-const configs = [
-  { label: label("SHA-512  64B key", 210_000), i: scale(210_000), d: "SHA-512" as const, k: 64, s: 32 },
-  { label: label("SHA-512  64B key", 100_000), i: scale(100_000), d: "SHA-512" as const, k: 64, s: 32 },
-  { label: label("SHA-512  64B key",  10_000), i: scale(10_000),  d: "SHA-512" as const, k: 64, s: 32 },
-  { label: label("SHA-256  32B key", 210_000), i: scale(210_000), d: "SHA-256" as const, k: 32, s: 32 },
-  { label: label("SHA-256  32B key", 100_000), i: scale(100_000), d: "SHA-256" as const, k: 32, s: 32 },
-  { label: label("SHA-256  32B key",  10_000), i: scale(10_000),  d: "SHA-256" as const, k: 32, s: 32 },
-  { label: label("SHA-512  16B key", 210_000), i: scale(210_000), d: "SHA-512" as const, k: 16, s: 16 },
-  { label: label("SHA-512  16B key", 100_000), i: scale(100_000), d: "SHA-512" as const, k: 16, s: 16 },
-  { label: label("SHA-512  16B key",  10_000), i: scale(10_000),  d: "SHA-512" as const, k: 16, s: 16 },
-];
+async function benchPublicHashVerify(configs: Config[], activeBackend: string): Promise<void> {
+  console.log(`\n  public API hash/verify (${activeBackend})`);
+  console.log(`  ─────────────────────────────────────`);
 
-console.log(`\n  runtime:  ${runtime}`);
+  for (const cfg of configs) {
+    const bc = new Beecrypt({
+      iterations: cfg.iterations,
+      digest: cfg.digest,
+      keyBytes: cfg.keyBytes,
+      saltBytes: cfg.saltBytes,
+    });
+
+    let encoded = "";
+    for (let i = 0; i < warmupRuns; i++) encoded = await bc.hash(password);
+    for (let i = 0; i < warmupRuns; i++) await bc.verify(password, encoded);
+
+    const hashMs = await meanAsync(hashRuns, async () => {
+      encoded = await bc.hash(password);
+    });
+    const verifyMs = await meanAsync(hashRuns, async () => {
+      await bc.verify(password, encoded);
+    });
+
+    console.log(`  ${fmtMs(hashMs)} ms hash | ${fmtMs(verifyMs)} ms verify — ${cfg.label}  k=${fmtNum(cfg.iterations)}`);
+  }
+}
+
+async function benchNativeDerive(configs: Config[]): Promise<void> {
+  console.log(`\n  direct derive only (WebCrypto PBKDF2)`);
+  console.log(`  ─────────────────────────────────────`);
+
+  for (const cfg of configs) {
+    await nativePbkdf2(password, salt.subarray(0, cfg.saltBytes), cfg.iterations, cfg.digest, cfg.keyBytes);
+    const ms = await meanAsync(deriveRuns, async () => {
+      await nativePbkdf2(password, salt.subarray(0, cfg.saltBytes), cfg.iterations, cfg.digest, cfg.keyBytes);
+    });
+    console.log(`  ${fmtMs(ms)} ms derive — ${cfg.label}  k=${fmtNum(cfg.iterations)}  (${fmtUs(ms * 1000 / cfg.iterations)} µs/iter)`);
+  }
+}
+
+function benchPureDerive(configs: Config[]): void {
+  console.log(`\n  direct derive only (pure JS fallback)`);
+  console.log(`  ─────────────────────────────────────`);
+
+  for (const cfg of configs) {
+    fallbackPbkdf2(password, salt.subarray(0, cfg.saltBytes), cfg.iterations, cfg.digest, cfg.keyBytes);
+    const ms = meanSync(deriveRuns, () => {
+      fallbackPbkdf2(password, salt.subarray(0, cfg.saltBytes), cfg.iterations, cfg.digest, cfg.keyBytes);
+    });
+    const usPerIter = ms * 1000 / cfg.iterations;
+    console.log(`  ${fmtMs(ms)} ms derive — ${cfg.label}  k=${fmtNum(cfg.iterations)}  (${fmtUs(usPerIter)} µs/iter, ~${fmtMs(usPerIter * 210_000 / 1000)} ms @210k)`);
+  }
+}
+
+console.log(`\n  runtime:  ${runtimeName()}`);
 console.log(`  password: ${password.length} chars`);
 console.log(`  warmup:   ${warmupRuns} run(s)`);
-console.log(`  samples:  ${benchRuns} per config`);
-console.log(`  ─────────────────────────────────────`);
+console.log(`  samples:  ${hashRuns} hash/verify, ${deriveRuns} derive`);
 
-const results: { label: string; hashMs: number; verifyMs: number }[] = [];
+const backend = await detectPbkdf2Backend();
+console.log(`  backend:  ${backend.name}${backend.reason ? ` (${backend.reason})` : ""}`);
 
-for (const cfg of configs) {
-  const bc = new Beecrypt({ iterations: cfg.i, digest: cfg.d, keyBytes: cfg.k, saltBytes: cfg.s });
-
-  let enc = "";
-  for (let w = 0; w < warmupRuns; w++) enc = await bc.hash(password);
-  for (let w = 0; w < warmupRuns; w++) await bc.verify(password, enc);
-
-  const hStart = performance.now();
-  for (let r = 0; r < benchRuns; r++) enc = await bc.hash(password);
-  const hashMs = (performance.now() - hStart) / benchRuns;
-
-  const vStart = performance.now();
-  for (let r = 0; r < benchRuns; r++) await bc.verify(password, enc);
-  const verifyMs = (performance.now() - vStart) / benchRuns;
-
-  results.push({ label: cfg.label, hashMs, verifyMs });
+if (backend.name === "webcrypto") {
+  await benchPublicHashVerify(publicConfigs, "WebCrypto PBKDF2");
+  await benchNativeDerive(deriveConfigs);
+} else {
+  const scaled = publicConfigs.map((cfg) => ({ ...cfg, iterations: Math.min(cfg.iterations, 1_000) }));
+  await benchPublicHashVerify(scaled, "pure JS fallback, scaled to <=1k iterations");
 }
 
-console.log();
-for (const r of results) {
-  console.log(`  ${fmt(r.hashMs)} ms  hash  |  ${fmt(r.verifyMs)} ms  verify  —  ${r.label}`);
-}
+benchPureDerive(pureConfigs);
 
-// vs Bun.password if available
-// @ts-ignore
-if (typeof Bun !== "undefined" && Bun.password) {
-  console.log(`\n  ──────────  vs Bun.password (argon2id) ──────────`);
-  let enc2 = "";
-  for (let w = 0; w < warmupRuns; w++) enc2 = await Bun.password.hash(password);
-  for (let w = 0; w < warmupRuns; w++) await Bun.password.verify(password, enc2);
+const bunPassword = runtimeGlobals.Bun?.password;
+if (bunPassword) {
+  console.log(`\n  Bun.password reference (argon2id)`);
+  console.log(`  ─────────────────────────────────────`);
+  let encoded = "";
+  for (let i = 0; i < warmupRuns; i++) encoded = await bunPassword.hash(password);
+  for (let i = 0; i < warmupRuns; i++) await bunPassword.verify(password, encoded);
 
-  const h2 = performance.now();
-  for (let r = 0; r < benchRuns; r++) enc2 = await Bun.password.hash(password);
-  const bpHash = (performance.now() - h2) / benchRuns;
-
-  const v2 = performance.now();
-  for (let r = 0; r < benchRuns; r++) await Bun.password.verify(password, enc2);
-  const bpVerify = (performance.now() - v2) / benchRuns;
-
-  console.log(`  ${fmt(bpHash)} ms  hash  |  ${fmt(bpVerify)} ms  verify  —  Bun.password (argon2id)`);
-}
-
-// Print the non-scaled reference
-if (!native) {
-  console.log(`\n  ── unscaled estimates (SHA-512) ──`);
-  const refIters = [210_000, 100_000, 10_000];
-  for (const i of refIters) {
-    const est = speed * i;
-    console.log(`  ~${est.toFixed(1).padStart(8)} ms  per hash  @ ${fmtNum(i)} iterations`);
-  }
+  const hashMs = await meanAsync(hashRuns, async () => {
+    encoded = await bunPassword.hash(password);
+  });
+  const verifyMs = await meanAsync(hashRuns, async () => {
+    await bunPassword.verify(password, encoded);
+  });
+  console.log(`  ${fmtMs(hashMs)} ms hash | ${fmtMs(verifyMs)} ms verify — Bun.password`);
 }
 
 console.log();
