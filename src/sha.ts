@@ -93,7 +93,7 @@ const K512_hi = new Uint32Array([
 ]);
 
 const K512_lo = new Uint32Array([
-  0xd728ae22, 0x23ef65cd, 0xf4d3b2fe, 0x8189dbbc, 0xf348b538, 0xb605d019, 0xaf194f9b, 0xda6d8118,
+  0xd728ae22, 0x23ef65cd, 0xec4d3b2f, 0x8189dbbc, 0xf348b538, 0xb605d019, 0xaf194f9b, 0xda6d8118,
   0xa3030242, 0x45706fbe, 0x4ee4b28c, 0xd5ffb4e2, 0xf27b896f, 0x3b1696b1, 0x25c71235, 0xcf692694,
   0x9ef14ad2, 0x384f25e3, 0x8b8cd5b5, 0x77ac9c65, 0x592b0275, 0x6ea6e483, 0xbd41fbd4, 0x831153b5,
   0xee66dfab, 0x2db43210, 0x98fb213f, 0xbeef0ee4, 0x3da88fc2, 0x930aa725, 0xe003826f, 0x0a0e6e70,
@@ -105,16 +105,37 @@ const K512_lo = new Uint32Array([
   0x23047d84, 0x40c72493, 0x15c9bebc, 0x9c100d4c, 0xcb3e42b6, 0xfc657e2a, 0x3ad6faec, 0x4a475817,
 ]);
 
-export function sha512(data: Uint8Array): Uint8Array {
-  // Initial hash values (hi, lo pairs)
-  let H0_hi = 0x6a09e667, H0_lo = 0xf3bcc908;
-  let H1_hi = 0xbb67ae85, H1_lo = 0x84caa73b;
-  let H2_hi = 0x3c6ef372, H2_lo = 0xfe94f82b;
-  let H3_hi = 0xa54ff53a, H3_lo = 0x5f1d36f1;
-  let H4_hi = 0x510e527f, H4_lo = 0xade682d1;
-  let H5_hi = 0x9b05688c, H5_lo = 0x2b3e6c1f;
-  let H6_hi = 0x1f83d9ab, H6_lo = 0xfb41bd6b;
-  let H7_hi = 0x5be0cd19, H7_lo = 0x137e2179;
+const SHA512_INITIAL = [
+  0x6a09e667, 0xf3bcc908,
+  0xbb67ae85, 0x84caa73b,
+  0x3c6ef372, 0xfe94f82b,
+  0xa54ff53a, 0x5f1d36f1,
+  0x510e527f, 0xade682d1,
+  0x9b05688c, 0x2b3e6c1f,
+  0x1f83d9ab, 0xfb41bd6b,
+  0x5be0cd19, 0x137e2179,
+] as const;
+
+const SHA384_INITIAL = [
+  0xcbbb9d5d, 0xc1059ed8,
+  0x629a292a, 0x367cd507,
+  0x9159015a, 0x3070dd17,
+  0x152fecd8, 0xf70e5939,
+  0x67332667, 0xffc00b31,
+  0x8eb44a87, 0x68581511,
+  0xdb0c2e0d, 0x64f98fa7,
+  0x47b5481d, 0xbefa4fa4,
+] as const;
+
+function sha512Digest32(data: Uint8Array, initial: readonly number[], outBytes: 48 | 64): Uint8Array {
+  let H0_hi = initial[0], H0_lo = initial[1];
+  let H1_hi = initial[2], H1_lo = initial[3];
+  let H2_hi = initial[4], H2_lo = initial[5];
+  let H3_hi = initial[6], H3_lo = initial[7];
+  let H4_hi = initial[8], H4_lo = initial[9];
+  let H5_hi = initial[10], H5_lo = initial[11];
+  let H6_hi = initial[12], H6_lo = initial[13];
+  let H7_hi = initial[14], H7_lo = initial[15];
 
   const len = data.length;
   const bits = len * 8;
@@ -273,7 +294,7 @@ export function sha512(data: Uint8Array): Uint8Array {
     }
 
     // Add to hash
-    H0_lo = (H0_lo + a_lo) >>> 0; carry = (H0_lo < a_lo) ? 1 : 0; H0_hi = ((H0_hi + a_hi) >>> 0) + carry; H0_hi = H0_hi >>> 0;
+    let carry = (H0_lo + a_lo) > 0xffffffff ? 1 : 0; H0_lo = (H0_lo + a_lo) >>> 0; H0_hi = ((H0_hi + a_hi) >>> 0) + carry; H0_hi = H0_hi >>> 0;
     H1_lo = (H1_lo + b_lo) >>> 0; carry = (H1_lo < b_lo) ? 1 : 0; H1_hi = ((H1_hi + b_hi) >>> 0) + carry; H1_hi = H1_hi >>> 0;
     H2_lo = (H2_lo + c_lo) >>> 0; carry = (H2_lo < c_lo) ? 1 : 0; H2_hi = ((H2_hi + c_hi) >>> 0) + carry; H2_hi = H2_hi >>> 0;
     H3_lo = (H3_lo + d_lo) >>> 0; carry = (H3_lo < d_lo) ? 1 : 0; H3_hi = ((H3_hi + d_hi) >>> 0) + carry; H3_hi = H3_hi >>> 0;
@@ -300,9 +321,13 @@ export function sha512(data: Uint8Array): Uint8Array {
   out[52] = (H6_lo >>> 24) & 0xff; out[53] = (H6_lo >>> 16) & 0xff; out[54] = (H6_lo >>> 8) & 0xff; out[55] = H6_lo & 0xff;
   out[56] = (H7_hi >>> 24) & 0xff; out[57] = (H7_hi >>> 16) & 0xff; out[58] = (H7_hi >>> 8) & 0xff; out[59] = H7_hi & 0xff;
   out[60] = (H7_lo >>> 24) & 0xff; out[61] = (H7_lo >>> 16) & 0xff; out[62] = (H7_lo >>> 8) & 0xff; out[63] = H7_lo & 0xff;
-  return out;
+  return outBytes === 64 ? out : out.subarray(0, outBytes);
+}
+
+export function sha512(data: Uint8Array): Uint8Array {
+  return sha512Digest32(data, SHA512_INITIAL, 64);
 }
 
 export function sha384(data: Uint8Array): Uint8Array {
-  return sha512(data).subarray(0, 48);
+  return sha512Digest32(data, SHA384_INITIAL, 48);
 }
