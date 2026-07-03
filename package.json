@@ -1,0 +1,16 @@
+{
+  "name": "beecrypt",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "bench": "bun bench.ts",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^6.0.3"
+  }
+}
