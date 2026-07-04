@@ -4,6 +4,7 @@
   "module": "src/index.ts",
   "type": "module",
   "private": false,
+  "description": "An alternative to bcrypt made faster and better. Originally made for ant.",
   "scripts": {
     "bnch": "bun bench.ts",
     "test": "bun test"
