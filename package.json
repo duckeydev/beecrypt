@@ -10,5 +10,9 @@
   },
   "peerDependencies": {
     "typescript": "^6.0.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/beecrypt/beecrypt.git"
   }
 }
