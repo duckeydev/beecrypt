@@ -1,6 +1,6 @@
 {
   "name": "beecrypt",
-  "version": "1.0.0",
+  "version": "1.0.0.2",
   "module": "src/index.ts",
   "type": "module",
   "private": false,
@@ -14,5 +14,6 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/beecrypt/beecrypt.git"
-  }
+  },
+  "license": "AGPL-3.0-only"
 }
