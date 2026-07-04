@@ -28,9 +28,12 @@ export interface Pbkdf2Backend {
 
 function getSubtle(): SubtleCrypto | null {
   try {
-    const c = (typeof globalThis !== "undefined" && globalThis.crypto) ||
-              (typeof crypto !== "undefined" && crypto);
-    return c?.subtle && c.subtle.importKey && c.subtle.deriveBits ? c.subtle : null;
+    const c =
+      (typeof globalThis !== "undefined" && globalThis.crypto) ||
+      (typeof crypto !== "undefined" && crypto);
+    return c?.subtle && c.subtle.importKey && c.subtle.deriveBits
+      ? c.subtle
+      : null;
   } catch {
     return null;
   }
@@ -47,11 +50,16 @@ export async function nativePbkdf2(
   if (!subtle) throw new Error("WebCrypto PBKDF2 is unavailable");
 
   const key = await subtle.importKey(
-    "raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"],
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
   );
   const bits = await subtle.deriveBits(
     { name: "PBKDF2", salt, iterations, hash: digest },
-    key, keyBytes * 8,
+    key,
+    keyBytes * 8,
   );
   return new Uint8Array(bits);
 }
@@ -94,7 +102,7 @@ export function fallbackPbkdf2(
   for (let b = 1; b <= blocks; b++) {
     const innerLen = blockSize + salt.length + 4;
     inner.set(salt, blockSize);
-    inner[blockSize + salt.length]     = (b >>> 24) & 0xff;
+    inner[blockSize + salt.length] = (b >>> 24) & 0xff;
     inner[blockSize + salt.length + 1] = (b >>> 16) & 0xff;
     inner[blockSize + salt.length + 2] = (b >>> 8) & 0xff;
     inner[blockSize + salt.length + 3] = b & 0xff;

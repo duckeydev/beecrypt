@@ -46,14 +46,22 @@ describe("Beecrypt class", () => {
   });
 
   it("works with SHA-256", async () => {
-    const bc = new Beecrypt({ digest: "SHA-256", keyBytes: 32, iterations: 100 });
+    const bc = new Beecrypt({
+      digest: "SHA-256",
+      keyBytes: 32,
+      iterations: 100,
+    });
     const encoded = await bc.hash("pw");
     expect(encoded).toContain("SHA-256");
     expect(await bc.verify("pw", encoded)).toBe(true);
   });
 
   it("works with SHA-384", async () => {
-    const bc = new Beecrypt({ digest: "SHA-384", keyBytes: 48, iterations: 100 });
+    const bc = new Beecrypt({
+      digest: "SHA-384",
+      keyBytes: 48,
+      iterations: 100,
+    });
     const encoded = await bc.hash("pw");
     expect(encoded).toContain("SHA-384");
     expect(await bc.verify("pw", encoded)).toBe(true);
@@ -124,14 +132,22 @@ describe("pure JS fallback", () => {
     for (const input of inputs) {
       const bytes = new TextEncoder().encode(input);
       for (const [algorithm, fn] of cases) {
-        expect(hex(fn(bytes))).toBe(createHash(algorithm).update(input).digest("hex"));
+        expect(hex(fn(bytes))).toBe(
+          createHash(algorithm).update(input).digest("hex"),
+        );
       }
     }
   });
 
   it("PBKDF2 output matches Node crypto when native APIs are unavailable", async () => {
-    const originalCrypto = Object.getOwnPropertyDescriptor(globalThis, "crypto");
-    const originalProcess = Object.getOwnPropertyDescriptor(globalThis, "process");
+    const originalCrypto = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "crypto",
+    );
+    const originalProcess = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "process",
+    );
     const salt = Uint8Array.from([1, 35, 69, 103, 137, 171, 205, 239]);
 
     Object.defineProperty(globalThis, "crypto", {
@@ -143,7 +159,10 @@ describe("pure JS fallback", () => {
         },
       },
     });
-    Object.defineProperty(globalThis, "process", { configurable: true, value: undefined });
+    Object.defineProperty(globalThis, "process", {
+      configurable: true,
+      value: undefined,
+    });
 
     try {
       const cases = [
@@ -153,18 +172,31 @@ describe("pure JS fallback", () => {
       ] as const;
 
       for (const [digest, nodeDigest, keyBytes] of cases) {
-        const bc = new Beecrypt({ digest, keyBytes, iterations: 100, saltBytes: salt.length });
+        const bc = new Beecrypt({
+          digest,
+          keyBytes,
+          iterations: 100,
+          saltBytes: salt.length,
+        });
         const encoded = await bc.hash("password");
         const parts = encoded.split("$");
         const derived = decodeBase64url(parts[5]);
-        const expected = pbkdf2Sync("password", salt, 100, keyBytes, nodeDigest);
+        const expected = pbkdf2Sync(
+          "password",
+          salt,
+          100,
+          keyBytes,
+          nodeDigest,
+        );
 
         expect(hex(derived)).toBe(hex(expected));
         expect(await bc.verify("password", encoded)).toBe(true);
       }
     } finally {
-      if (originalCrypto) Object.defineProperty(globalThis, "crypto", originalCrypto);
-      if (originalProcess) Object.defineProperty(globalThis, "process", originalProcess);
+      if (originalCrypto)
+        Object.defineProperty(globalThis, "crypto", originalCrypto);
+      if (originalProcess)
+        Object.defineProperty(globalThis, "process", originalProcess);
     }
   });
 });
